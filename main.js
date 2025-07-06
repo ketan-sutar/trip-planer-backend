@@ -4,18 +4,22 @@ const express = require("express");
 const bodyParser = require("body-parser"); // Already included, good!
 const cors = require("cors");
 
-
 const travelRoutes = require("./routes/travelRoutes"); // Assuming you have a travelRoutes.js file for handling travel plans
 
 const app = express();
 const port = process.env.PORT || 3000;
-app.use(cors({ origin: "http://localhost:5173" }));
-
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "https://trip-planer-frontend.vercel.app", // ✅ add this
+    ],
+  })
+);
 app.use((req, res, next) => {
   // console.log(`Incoming request: ${req.method} ${req.url}`);
   next();
 });
-
 
 // Middleware for parsing request bodies
 app.use(bodyParser.json());
@@ -131,7 +135,6 @@ app.post("/api/content", async (req, res) => {
 // ---
 // Start Server
 // ---
-
 
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
