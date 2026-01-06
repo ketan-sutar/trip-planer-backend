@@ -1,141 +1,93 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+
 require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser"); // Already included, good!
 const cors = require("cors");
-
-const travelRoutes = require("./routes/travelRoutes"); // Assuming you have a travelRoutes.js file for handling travel plans
+const axios = require("axios");
 
 const app = express();
 const port = process.env.PORT || 3000;
+
 app.use(
   cors({
     origin: [
-      "https://trip-planer-frontend.vercel.app", // ✅ add this
-      "http://localhost:5173",
+      "https://trip-planer-frontend.vercel.app",
+      "http://localhost:5174",
     ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.use((req, res, next) => {
-  // console.log(`Incoming request: ${req.method} ${req.url}`);
-  next();
-});
 
-// Middleware for parsing request bodies
-app.use(bodyParser.json());
-app.use(express.json()); // Redundant if bodyParser.json() is used, but doesn't hurt.
-app.use(express.urlencoded({ extended: true })); // Good for handling URL-encoded bodies
-
-// ---
-// Routes
-// ---
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => {
-  res.send("Hello World! Backend Running!!.😊 ");
+  res.send("Hello World! Backend Running!!.😊");
 });
 
-// ---
-// Gemini API Configuration
-// ---
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
-// Ensure your .env file has API_KEY, not GEMINI_API_KEY if you changed it.
-// It's good practice to stick to one variable name, e.g., GEMINI_API_KEY.
-const gemini_api_key = process.env.GEMINI_API_KEY; // Using GEMINI_API_KEY as per your .env example
-const googleAI = new GoogleGenerativeAI(gemini_api_key);
+// Simple cache to avoid duplicate API calls
+const travelPlanCache = {}; // { prompt: result }
 
-// Initialize the model once.
-// 'gemini-1.5-flash' is a valid model name if you have access to it.
-// If you encounter issues, try 'gemini-pro'.
-const geminiModel = googleAI.getGenerativeModel({
-  // model: "gemini-1.5-flash",
-  model: "gemini-2.5-flash-preview-05-20",
-});
+// Function to call OpenRouter API
+const generateContent = async (prompt, previousMessages = []) => {
+  const cacheKey = JSON.stringify({ prompt, previousMessages });
+  if (travelPlanCache[cacheKey]) {
+    console.log("✅ Using cached content");
+    return travelPlanCache[cacheKey];
+  }
 
-// ---
-// AI Content Generation Function
-// ---
+  const messages = [
+    ...previousMessages,
+    {
+      role: "user",
+      content: prompt,
+    },
+  ];
 
-const generate = async (question) => {
   try {
-    // The generateContent method expects an array of parts, even for a single text prompt.
-    const result = await geminiModel.generateContent([{ text: question }]);
-    const response = result.response;
-
-    // Check if response and its text method exist
-    if (response && typeof response.text === "function") {
-      let generatedText = await response.text();
-      generatedText = generatedText
-        .replace(/```(?:json)?\s*/g, "")
-        .replace(/```$/, "");
-
-      // const generatedText = response.json()
-
-      try {
-        const jsonResponse = JSON.parse(generatedText);
-        return jsonResponse;
-      } catch (e) {
-        return {
-          response: generatedText,
-          metadata: {
-            model: geminiModel.model,
-            prompt: question,
-            timestamp: new Date().toISOString(),
-          },
-        };
+    const res = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: "xiaomi/mimo-v2-flash:free", // Use your chosen model
+        messages,
+        reasoning: { enabled: true },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+        },
       }
+    );
 
-      // console.log("Generated text (console log for server):", generatedText);
-      return generatedText;
-    } else {
-      console.error(
-        "Gemini API response did not contain expected text method:",
-        response
-      );
-      throw new Error("Invalid Gemini API response structure.");
-    }
-  } catch (error) {
-    // Log the error for server-side debugging
-    console.error("Error generating content from Gemini API:", error);
-    // Re-throw the error so the Express route can catch it and send an appropriate response
-    throw error;
+    const assistantMessage = res.data.choices[0].message;
+
+    const result = {
+      content: assistantMessage.content,
+      reasoning_details: assistantMessage.reasoning_details || null,
+    };
+
+    travelPlanCache[cacheKey] = result;
+    return result;
+  } catch (err) {
+    console.error("❌ OpenRouter API error:", err.response?.data || err.message);
+    throw err;
   }
 };
 
-//  routes part here
-
-// ---
-// API Endpoint for Content Generation
-// ---
-
+// API endpoint
 app.post("/api/content", async (req, res) => {
   try {
-    const question = req.body.question; // Get the question from the request body
+    const { question, previousMessages } = req.body;
+    if (!question) return res.status(400).json({ error: "'question' is required." });
 
-    if (!question) {
-      // Send a 400 Bad Request if 'question' is missing
-      return res.status(400).json({
-        error: "Bad Request: 'question' is required in the request body.",
-      });
-    }
-
-    const result = await generate(question);
-    // console.log("Result being sent to client:", result); // Log the final result
-
-    // Send the generated result as JSON
-    res.json({ result: result });
-  } catch (error) {
-    // Catch any errors thrown by the 'generate' function
-    console.error("Error in /api/content route:", error);
-    res
-      .status(500)
-      .json({ error: "Internal Server Error during content generation." });
+    const result = await generateContent(question, previousMessages || []);
+    res.json({ result });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to generate content" });
   }
 });
 
-// ---
-// Start Server
-// ---
-
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
-});
+app.listen(port, () => console.log(`Server running on port ${port}`));
