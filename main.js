@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -9,10 +8,11 @@ const port = process.env.PORT || 3000;
 
 app.use(
   cors({
-    origin: [
-      "https://trip-planer-frontend.vercel.app",
-      "http://localhost:5174",
-    ],
+    // origin: [
+    //   "https://trip-planer-frontend.vercel.app",
+    //   "http://localhost:5174",
+    // ],
+    origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -72,7 +72,10 @@ const generateContent = async (prompt, previousMessages = []) => {
     travelPlanCache[cacheKey] = result;
     return result;
   } catch (err) {
-    console.error("❌ OpenRouter API error:", err.response?.data || err.message);
+    console.error(
+      "❌ OpenRouter API error:",
+      err.response?.data || err.message
+    );
     throw err;
   }
 };
@@ -81,7 +84,8 @@ const generateContent = async (prompt, previousMessages = []) => {
 app.post("/api/content", async (req, res) => {
   try {
     const { question, previousMessages } = req.body;
-    if (!question) return res.status(400).json({ error: "'question' is required." });
+    if (!question)
+      return res.status(400).json({ error: "'question' is required." });
 
     const result = await generateContent(question, previousMessages || []);
     res.json({ result });
