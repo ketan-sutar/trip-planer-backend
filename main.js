@@ -1,42 +1,53 @@
+
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const axios = require("axios");
+const OpenAI = require("openai");
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(
   cors({
-    // origin: [
-    //   "https://trip-planer-frontend.vercel.app",
-    //   "http://localhost:5174",
-    // ],
     origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-  })
+  }),
 );
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => {
-  res.send("Hello World! Backend Running!!.😊");
+  res.send("Hello World! Backend Running 😊");
 });
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+// OpenRouter Client
+const client = new OpenAI({
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: process.env.OPENROUTER_API_KEY,
+});
 
-// Simple cache to avoid duplicate API calls
-const travelPlanCache = {}; // { prompt: result }
+console.log("API KEY:", process.env.OPENROUTER_API_KEY);
 
-// Function to call OpenRouter API
+// simple cache
+const travelPlanCache = {};
+
+// Function to generate AI content
 const generateContent = async (prompt, previousMessages = []) => {
   const cacheKey = JSON.stringify({ prompt, previousMessages });
+
   if (travelPlanCache[cacheKey]) {
-    console.log("✅ Using cached content");
+    console.log("✅ Using cached result");
     return travelPlanCache[cacheKey];
   }
+
+  const models = [
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "minimax/minimax-m2.5:free",
+    "stepfun-ai/step-3.5-flash:free",
+    "arcee-ai/trinity-mini:free",
+  ];
 
   const messages = [
     ...previousMessages,
@@ -46,37 +57,39 @@ const generateContent = async (prompt, previousMessages = []) => {
     },
   ];
 
-  try {
-    const res = await axios.post(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        model: "xiaomi/mimo-v2-flash:free", // Use your chosen model
+  for (let model of models) {
+    try {
+      console.log(`⚡ Trying model: ${model}`);
+
+      const apiResponse = await client.chat.completions.create({
+        model,
         messages,
-        reasoning: { enabled: true },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+      });
+
+      const assistantMessage = apiResponse?.choices?.[0]?.message;
+
+      if (!assistantMessage) {
+        throw new Error("Invalid response from OpenRouter");
       }
-    );
 
-    const assistantMessage = res.data.choices[0].message;
+      const result = {
+        content: assistantMessage.content,
+        reasoning_details: assistantMessage.reasoning_details || null,
+      };
 
-    const result = {
-      content: assistantMessage.content,
-      reasoning_details: assistantMessage.reasoning_details || null,
-    };
+      travelPlanCache[cacheKey] = result;
 
-    travelPlanCache[cacheKey] = result;
-    return result;
-  } catch (err) {
-    console.error(
-      "❌ OpenRouter API error:",
-      err.response?.data || err.message
-    );
-    throw err;
+      console.log(`✅ Success using model: ${model}`);
+
+      return result;
+    } catch (err) {
+      console.log(`❌ Model failed: ${model}`);
+      console.log(err.message);
+
+      if (model === models[models.length - 1]) {
+        throw err;
+      }
+    }
   }
 };
 
@@ -84,14 +97,26 @@ const generateContent = async (prompt, previousMessages = []) => {
 app.post("/api/content", async (req, res) => {
   try {
     const { question, previousMessages } = req.body;
-    if (!question)
-      return res.status(400).json({ error: "'question' is required." });
+
+    if (!question) {
+      return res.status(400).json({
+        error: "'question' is required",
+      });
+    }
 
     const result = await generateContent(question, previousMessages || []);
+
     res.json({ result });
   } catch (err) {
-    res.status(500).json({ error: "Failed to generate content" });
+    console.error("❌ SERVER ERROR:", err);
+
+    res.status(500).json({
+      error: "Failed to generate content",
+      details: err.message,
+    });
   }
 });
 
-app.listen(port, () => console.log(`Server running on port ${port}`));
+app.listen(port, () => {
+  console.log(`🚀 Server running on port ${port}`);
+});
